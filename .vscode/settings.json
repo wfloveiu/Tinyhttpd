@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "typeinfo": "c",
+        "features-time64.h": "c",
+        "in.h": "c"
+    },
+    "C_Cpp.errorSquiggles": "enabled",
+    
+
+}

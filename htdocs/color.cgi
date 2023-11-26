@@ -1,5 +1,6 @@
-#!/usr/local/bin/perl -Tw
+#!/usr/bin/perl -Tw
 
+# 这里的/usr/bin/perl按你自己电脑中perl的位置写：whereis perl
 use strict;
 use CGI;
 

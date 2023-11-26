@@ -54,19 +54,22 @@ void unimplemented(int);
 /**********************************************************************/
 void accept_request(void *arg)
 {
-    int client = (intptr_t)arg;
-    char buf[1024];
+    int client = (intptr_t)arg; //套接字描述符
+    char buf[1024];   //字符缓冲区，把request中的字符都存入这里边
     size_t numchars;
-    char method[255];
-    char url[255];
-    char path[512];
+    char method[255];  //请求方法
+    char url[255];    // 请求中的URL 
+    char path[512];   // 真正的资源路径
     size_t i, j;
-    struct stat st;
+    struct stat st;  //描述文件状态  https://blog.csdn.net/lijian2017/article/details/87878810
     int cgi = 0;      /* becomes true if server decides this is a CGI
                        * program */
     char *query_string = NULL;
 
-    numchars = get_line(client, buf, sizeof(buf));
+    //获取http请求的第一行字符串，如'GET /check.cgi HTTP/1'
+    numchars = get_line(client, buf, sizeof(buf)); // 返回值是buf缓冲区中已被填入字符的最高位，通俗讲就是buf中被字符填到哪个位置了
+
+    // 截出来method
     i = 0; j = 0;
     while (!ISspace(buf[i]) && (i < sizeof(method) - 1))
     {
@@ -74,27 +77,31 @@ void accept_request(void *arg)
         i++;
     }
     j=i;
-    method[i] = '\0';
+    method[i] = '\0';  //字符串结束符
 
-    if (strcasecmp(method, "GET") && strcasecmp(method, "POST"))
+    // 只接受GET和POST请求，其它类型的请求调用uniplemented函数
+    if (strcasecmp(method, "GET") && strcasecmp(method, "POST")) //strcasecmp忽略大小写比较字符串，相同返回0。注意：一直比较直到碰到结束符'\0'
     {
         unimplemented(client);
         return;
     }
 
+    // 所有的POST请求都是带请求体参数的，需要使用cgi来处理参数
     if (strcasecmp(method, "POST") == 0)
         cgi = 1;
 
+    // 截出来请求中的URL，如'GET /check.cgi HTTP/1'中的'/check.cgi'
     i = 0;
-    while (ISspace(buf[j]) && (j < numchars))
+    while (ISspace(buf[j]) && (j < numchars)) //处理连续的空格
         j++;
-    while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < numchars))
+    while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < numchars)) //截出来URL
     {
         url[i] = buf[j];
         i++; j++;
     }
     url[i] = '\0';
 
+    // GET请求也可以在URL中携带参数，此时也需要cgi文件处理参数，故需要特别讨论一下
     if (strcasecmp(method, "GET") == 0)
     {
         query_string = url;
@@ -103,27 +110,36 @@ void accept_request(void *arg)
         if (*query_string == '?')
         {
             cgi = 1;
-            *query_string = '\0';
+            *query_string = '\0'; //非常重要的步骤，假如原来是url='/color.cgi?color:'red'',此时找到'?'后，把这一位改成字符串结束符，相当于url='/color.cgi'
             query_string++;
         }
     }
 
-    sprintf(path, "htdocs%s", url);
-    if (path[strlen(path) - 1] == '/')
+
+    sprintf(path, "htdocs%s", url); //字符串格式化，假如url="/index.html",则path="htdocs/index.html"
+    if (path[strlen(path) - 1] == '/') //在请求中，如果path结尾是'/'比如'/document/'或者是'/',默认的请求页面是该目录下的index.html
         strcat(path, "index.html");
-    if (stat(path, &st) == -1) {
-        while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
+
+
+    if (stat(path, &st) == -1) {   //将参数path所指的文件状态, 复制到参数st所指的结构中，返回值为-1表示这个文件不存在
+        while ((numchars > 0) && strcmp("\n", buf))     /* 一直读 & 丢弃头部信息 */
             numchars = get_line(client, buf, sizeof(buf));
         not_found(client);
     }
     else
     {
-        if ((st.st_mode & S_IFMT) == S_IFDIR)
-            strcat(path, "/index.html");
+        // 不理解这一步的操作是在干什么!!
+        if ((st.st_mode & S_IFMT) == S_IFDIR)  //检查文件的类型是否是目录
+            strcat(path, "/index.html");       //感觉有个小bug，万一这个目录下没有index.html文件呢？这里应该需要再判断一下吧
+
+        // 在这个项目中，请求既可以指向html页面，也可以指向cgi(可以通过cgi渲染html页面)，因此这里需要根据文件的执行性
+        // 判断这个请求的指向是不可执行的html页面，还是可执行的cgi文件
+        // 如果就是html页面，只需要执行serve_file函数进行简单的页面内容的返回
+        // 如果是cgi文件，那就要执行execute_cgi函数，通过这个函数执行cgi来生成html页面。
         if ((st.st_mode & S_IXUSR) ||
                 (st.st_mode & S_IXGRP) ||
-                (st.st_mode & S_IXOTH)    )
-            cgi = 1;
+                (st.st_mode & S_IXOTH)    ) //如果是一个可执行文件的话，说明这个文件是cgi文件，
+            cgi = 1;     //
         if (!cgi)
             serve_file(client, path);
         else
@@ -163,9 +179,8 @@ void bad_request(int client)
 void cat(int client, FILE *resource)
 {
     char buf[1024];
-
-    fgets(buf, sizeof(buf), resource);
-    while (!feof(resource))
+    fgets(buf, sizeof(buf), resource); //从指定的流 stream 读取一行，并把它存储在 str 所指向的字符串内。当读取 (n-1) 个字符时，或者读取到换行符时，或者到达文件末尾时，它会停止
+    while (!feof(resource)) //测试给定流 stream 的文件结束标识符,
     {
         send(client, buf, strlen(buf), 0);
         fgets(buf, sizeof(buf), resource);
@@ -211,7 +226,7 @@ void execute_cgi(int client, const char *path,
         const char *method, const char *query_string)
 {
     char buf[1024];
-    int cgi_output[2];
+    int cgi_output[2]; 
     int cgi_input[2];
     pid_t pid;
     int status;
@@ -220,17 +235,18 @@ void execute_cgi(int client, const char *path,
     int numchars = 1;
     int content_length = -1;
 
-    buf[0] = 'A'; buf[1] = '\0';
-    if (strcasecmp(method, "GET") == 0)
+
+    buf[0] = 'A'; buf[1] = '\0'; 
+    if (strcasecmp(method, "GET") == 0)  //get的话，是没有请求体的，读取整个HTTP请求，并丢弃
         while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
             numchars = get_line(client, buf, sizeof(buf));
-    else if (strcasecmp(method, "POST") == 0) /*POST*/
+    else if (strcasecmp(method, "POST") == 0)   //如果是POST的话，需要从请求头中读出Contemt-Length字段，方便等会儿读请求体中的内容，
     {
         numchars = get_line(client, buf, sizeof(buf));
         while ((numchars > 0) && strcmp("\n", buf))
         {
-            buf[15] = '\0';
-            if (strcasecmp(buf, "Content-Length:") == 0)
+            buf[15] = '\0';    //字符串结束符
+            if (strcasecmp(buf, "Content-Length:") == 0)  //比较前15个字符
                 content_length = atoi(&(buf[16]));
             numchars = get_line(client, buf, sizeof(buf));
         }
@@ -242,33 +258,37 @@ void execute_cgi(int client, const char *path,
     else/*HEAD or other*/
     {
     }
-
-
-    if (pipe(cgi_output) < 0) {
+    // pipe()函数的参数是一个包含2个文件描述符的数组，cgi_output[0]:读管道，cgi_output[1]:写管道
+    if (pipe(cgi_output) < 0) { //https://developer.aliyun.com/article/516018
         cannot_execute(client);
         return;
-    }
+    } 
     if (pipe(cgi_input) < 0) {
         cannot_execute(client);
         return;
     }
 
-    if ( (pid = fork()) < 0 ) {
+    if ( (pid = fork()) < 0 ) {  //https://www.cnblogs.com/outsider0606/p/16559584.html
         cannot_execute(client);
         return;
     }
-    sprintf(buf, "HTTP/1.0 200 OK\r\n");
+    sprintf(buf, "HTTP/1.0 200 OK\r\n");  // 响应行
     send(client, buf, strlen(buf), 0);
+    
+
+    printf("PID=%d", pid);
     if (pid == 0)  /* child: CGI script */
     {
         char meth_env[255];
         char query_env[255];
         char length_env[255];
 
-        dup2(cgi_output[1], STDOUT);
-        dup2(cgi_input[0], STDIN);
-        close(cgi_output[0]);
+        dup2(cgi_output[1], STDOUT); //将子进程--写管道的文件的输出重定向为标准输出
+        dup2(cgi_input[0], STDIN);   //将子进程--读管道的文件的输入重定向为标准输入
+         //关闭子进程的两个无用端口
+        close(cgi_output[0]);  
         close(cgi_input[1]);
+        // 设置环境变量，这些环境变量都是为了给 cgi 脚本调用
         sprintf(meth_env, "REQUEST_METHOD=%s", method);
         putenv(meth_env);
         if (strcasecmp(method, "GET") == 0) {
@@ -278,14 +298,15 @@ void execute_cgi(int client, const char *path,
         else {   /* POST */
             sprintf(length_env, "CONTENT_LENGTH=%d", content_length);
             putenv(length_env);
-        }
-        execl(path, NULL);
+        } 
+
+        execl(path, NULL); //执行参数path字符串所代表的路径文件，path是要执行的文件路径
         exit(0);
-    } else {    /* parent */
+    } else {    /* parent */   // https://www.cnblogs.com/LHNing/archive/2012/03/12/2391438.html
         close(cgi_output[1]);
         close(cgi_input[0]);
         if (strcasecmp(method, "POST") == 0)
-            for (i = 0; i < content_length; i++) {
+            for (i = 0; i < content_length; i++) {   //读取请求体中的数据，写入
                 recv(client, &c, 1, 0);
                 write(cgi_input[1], &c, 1);
             }
@@ -319,19 +340,23 @@ int get_line(int sock, char *buf, int size)
 
     while ((i < size - 1) && (c != '\n'))
     {
-        n = recv(sock, &c, 1, 0);
+        n = recv(sock, &c, 1, 0);  //套接字、缓冲区、缓冲区大小、0，char类型是一个字节，故第三个参数是1
+        //返回值是copy的字节数
         /* DEBUG printf("%02X\n", c); */
-        if (n > 0)
+        if (n > 0) 
         {
-            if (c == '\r')
+            if (c == '\r') //如果是回车符，需要判断一下下一个字符是不是换行符
             {
-                n = recv(sock, &c, 1, MSG_PEEK);
+                n = recv(sock, &c, 1, MSG_PEEK);   // 函数从套接字 sock 中接收数据，但是不移除接收到的数据，而是通过 MSG_PEEK 标志来查看当前可用的数据。
                 /* DEBUG printf("%02X\n", c); */
+                // 下一个字符是换行符，那就再把换行符读出来，等会就可以直接退出函数
                 if ((n > 0) && (c == '\n'))
-                    recv(sock, &c, 1, 0);
+                    recv(sock, &c, 1, 0); //此时c=='\n'
+                // 下一个字符不是换行符，那也满足是“回车符”的条件，依旧不保存字符，退出函数
                 else
                     c = '\n';
             }
+            //保存到缓冲区中
             buf[i] = c;
             i++;
         }
@@ -356,6 +381,14 @@ void headers(int client, const char *filename)
     strcpy(buf, "HTTP/1.0 200 OK\r\n");
     send(client, buf, strlen(buf), 0);
     strcpy(buf, SERVER_STRING);
+
+    // 打印这个SERVER_STRING
+    /*
+    for(int i=0;i<strlen(buf);i++)
+        printf("%c",buf[i]);
+    printf("\n");
+    */
+
     send(client, buf, strlen(buf), 0);
     sprintf(buf, "Content-Type: text/html\r\n");
     send(client, buf, strlen(buf), 0);
@@ -366,7 +399,7 @@ void headers(int client, const char *filename)
 /**********************************************************************/
 /* Give a client a 404 not found status message. */
 /**********************************************************************/
-void not_found(int client)
+void not_found(int client) //经典404
 {
     char buf[1024];
 
@@ -399,7 +432,7 @@ void not_found(int client)
 /**********************************************************************/
 void serve_file(int client, const char *filename)
 {
-    FILE *resource = NULL;
+    FILE *resource = NULL; //指向文件的指针
     int numchars = 1;
     char buf[1024];
 
@@ -407,7 +440,7 @@ void serve_file(int client, const char *filename)
     while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
         numchars = get_line(client, buf, sizeof(buf));
 
-    resource = fopen(filename, "r");
+    resource = fopen(filename, "r");  //在这里解决了122行的疑问，判断文件是否存在是在这里判断的
     if (resource == NULL)
         not_found(client);
     else
@@ -428,9 +461,9 @@ void serve_file(int client, const char *filename)
 /**********************************************************************/
 int startup(u_short *port)
 {
-    int httpd = 0;
+    int httpd = 0;   //套接字描述符
     int on = 1;
-    struct sockaddr_in name;
+    struct sockaddr_in name;  //ip+port
 
     httpd = socket(PF_INET, SOCK_STREAM, 0);
     if (httpd == -1)
@@ -462,7 +495,7 @@ int startup(u_short *port)
  * implemented.
  * Parameter: the client socket */
 /**********************************************************************/
-void unimplemented(int client)
+void unimplemented(int client)  //除了post和get的请求方法不被支持
 {
     char buf[1024];
 
@@ -489,7 +522,7 @@ void unimplemented(int client)
 int main(void)
 {
     int server_sock = -1;
-    u_short port = 4000;
+    u_short port = 4000;    //服务器运行在4000端口
     int client_sock = -1;
     struct sockaddr_in client_name;
     socklen_t  client_name_len = sizeof(client_name);
